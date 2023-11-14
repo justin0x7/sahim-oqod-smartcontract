@@ -8,15 +8,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/CryptoFist/OQOD_Contracts.git"
+    "url": "git+https://github.com/justin0x7/sahim-oqod-smartcontract"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/CryptoFist/OQOD_Contracts/issues"
+    "url": "https://github.com/justin0x7/sahim-oqod-smartcontract/issues"
   },
-  "homepage": "https://github.com/CryptoFist/OQOD_Contracts#readme",
+  "homepage": "https://github.com/justin0x7/sahim-oqod-smartcontract/blob/main/README.md",
   "devDependencies": {
     "@ethereumjs/tx": "^4.1.2",
     "@nomicfoundation/hardhat-network-helpers": "^1.0.9",
