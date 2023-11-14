@@ -34,7 +34,7 @@
     "hardhat": "^2.19.0",
     "hardhat-contract-sizer": "^2.8.0",
     "hardhat-gas-reporter": "^1.0.9",
+    "merkletreejs": "^0.3.11",
     "solidity-coverage": "^0.8.5"
   }
 }
-

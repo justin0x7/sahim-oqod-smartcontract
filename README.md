@@ -13,7 +13,7 @@ While trading, NFT price will be changed.
 taking a simple example.
 creator listed NFT as $,5000(piece price is $5) then buyer bought 200 pieces as $1200(piece price $6). then NFT total price will be changed to $5200.
 
-## Trade 
+## Trade
 
 Piece is virutal number, not real asset.
 Owner who has whole ownership can open/close trading.

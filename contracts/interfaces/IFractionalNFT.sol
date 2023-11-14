@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -17,14 +16,8 @@ interface IFractionalNFT {
     }
 
     /// @notice Mint NFT with exact metaData.
-    /// @param _merkleProof The merkleProof to check available for minting.
-    /// @param _votePrice The price of each vote.
     /// @param _metaData The metaData of tokenId.
-    function mintNFT(
-        bytes32[] calldata _merkleProof,
-        uint256 _votePrice,
-        string memory _metaData
-    ) external;
+    function mintNFT(string memory _metaData) external;
 
     /// @notice Update listedVotePrice.
     /// @dev Only orderbook can call this funciton.
@@ -70,10 +63,9 @@ interface IFractionalNFT {
     /// @param _orderBook The address of orderBook contract.
     function setOrderBook(address _orderBook) external;
 
-    /// @notice Update merkleRoot.
+    /// @notice Set enable the certain tokenId.
     /// @dev Only owner can call this function.
-    /// @param _merkleRoot The data of MerkleRoot.
-    function updateMerkleRoot(bytes32 _merkleRoot) external;
+    function enableNFT(uint256 _tokenId) external;
 
     /// @notice Get all owners who have ownership of the specific tokenId.
     /// @param _tokenId The tokenId of NFT.
@@ -85,8 +77,6 @@ interface IFractionalNFT {
     function getAllOwnedTokenIds(
         address _owner
     ) external view returns (uint256[] memory);
-
-    event MerkleRootUpdated(bytes32 merkleRoot);
 
     event NFTMinted(address indexed minter, uint256 tokenId);
 

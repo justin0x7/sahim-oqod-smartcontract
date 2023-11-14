@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -25,10 +24,13 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
     mapping(uint256 => PriceInfo) public prices;
 
     /// @notice VoteInformation by tokenId and owner.
-    mapping(uint256 => mapping(address => VoteInfo)) private votesInfo;
+    mapping(uint256 => mapping(address => VoteInfo)) public votesInfo;
 
     /// @notice MetaData for each tokenId.
     mapping(uint256 => string) private tokensMetaData;
+
+    /// @notice Flags to show NFT is allowed or not.
+    mapping(uint256 => bool) public allowedNFTs;
 
     /// @notice The address of orderBook.
     address public orderBook;
@@ -43,7 +45,7 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
     bytes32 private merkleRoot;
 
     /// @notice Default votes(pieces) amount for tokenId.
-    uint16 public votesAmount;
+    uint16 public votesAmount = 1000;
 
     modifier onlyOrderBook() {
         require(
@@ -53,34 +55,36 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
         _;
     }
 
+    modifier onlyValidTokenId(uint256 _tokenId) {
+        require(_tokenId < tokenId && allowedNFTs[_tokenId], "invalid tokenId");
+        _;
+    }
+
     constructor() ERC721("Sahim NFT", "SNFT") {
         tokenId = 1;
     }
 
     /// @inheritdoc	IFractionalNFT
-    function mintNFT(
-        bytes32[] calldata _merkleProof,
-        uint256 _votePrice,
-        string memory _metaData
-    ) external override {
+    function mintNFT(string memory _metaData) external override {
         address sender = msg.sender;
-        require(
-            MerkleProof.verify(
-                _merkleProof,
-                merkleRoot,
-                keccak256(abi.encodePacked(tokenId, _metaData, sender))
-            ),
-            "not allowed NFT"
-        );
 
         owners[tokenId].add(sender);
-        ownedTokenIds[sender].add(tokenId);
-        votesInfo[tokenId][sender] = VoteInfo(votesAmount, votesAmount, 0);
         tokensMetaData[tokenId] = _metaData;
-        _balances[sender] += 1;
-        _updateAverageVotePrice(tokenId, _votePrice, votesAmount);
+        allowedNFTs[tokenId] = false;
 
         emit NFTMinted(sender, tokenId++);
+    }
+
+    /// @inheritdoc IFractionalNFT
+    function enableNFT(uint256 _tokenId) external override onlyOwner {
+        require(_tokenId < tokenId, "invalid tokenId");
+        require(!allowedNFTs[_tokenId], "already enabled");
+
+        address creator = owners[_tokenId].at(0);
+        ownedTokenIds[creator].add(_tokenId);
+        votesInfo[_tokenId][creator] = VoteInfo(votesAmount, 0, votesAmount);
+        allowedNFTs[_tokenId] = true;
+        _balances[creator] += 1;
     }
 
     /// @inheritdoc IFractionalNFT
@@ -89,8 +93,7 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
         uint256 _tradeTokenId,
         uint256 _votePrice,
         uint16 _votesAmount
-    ) external override onlyOrderBook {
-        require(_tradeTokenId < tokenId, "invalid tokenId");
+    ) external override onlyOrderBook onlyValidTokenId(_tradeTokenId) {
         VoteInfo storage voteInfo = votesInfo[_tradeTokenId][_owner];
         require(
             voteInfo.unlistedVotesAmount >= _votesAmount,
@@ -106,7 +109,7 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
         uint256 _tokenId,
         uint256 _price,
         uint16 _amounts
-    ) external override onlyOrderBook {
+    ) external override onlyOrderBook onlyValidTokenId(_tokenId) {
         _updateAverageVotePrice(_tokenId, _price, _amounts);
     }
 
@@ -142,7 +145,7 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
             _balances[_seller] -= 1;
             ownedTokenIds[_seller].remove(_tradeTokenId);
         }
-        if (voteInfo.ownedVotesAmount > _soldVotesAmount) {
+        if (voteInfo.ownedVotesAmount == _soldVotesAmount) {
             owners[_tradeTokenId].add(_buyer);
             _balances[_buyer] += 1;
             ownedTokenIds[_buyer].add(_tradeTokenId);
@@ -157,16 +160,11 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
         emit OrderBookSet(_orderBook);
     }
 
-    /// @inheritdoc IFractionalNFT
-    function updateMerkleRoot(bytes32 _merkleRoot) external override onlyOwner {
-        merkleRoot = _merkleRoot;
-        emit MerkleRootUpdated(_merkleRoot);
-    }
-
     /// @notice Get owner of tokenId.
     /// @dev If one user owns whole ownership of tokenId, return user address, otherwise return zero address.
-    function ownerOf(uint256 _tokenId) public view override returns (address) {
-        require(_tokenId < tokenId, "ERC721: invalid token ID");
+    function ownerOf(
+        uint256 _tokenId
+    ) public view override onlyValidTokenId(_tokenId) returns (address) {
         if (owners[_tokenId].length() == 1) {
             return owners[_tokenId].at(0);
         } else {
@@ -185,8 +183,13 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
     /// @param _tokenId The tokenId of NFT.
     function getAllOwners(
         uint256 _tokenId
-    ) external view override returns (address[] memory) {
-        require(_tokenId < tokenId, "ERC721: invalid token ID");
+    )
+        external
+        view
+        override
+        onlyValidTokenId(_tokenId)
+        returns (address[] memory)
+    {
         return owners[_tokenId].values();
     }
 
@@ -200,6 +203,12 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
             "ERC721: address zero is not a valid owner"
         );
         return _balances[_owner];
+    }
+
+    function tokenURI(
+        uint256 _tokenId
+    ) public view virtual override returns (string memory) {
+        return tokensMetaData[_tokenId];
     }
 
     function _updateAverageVotePrice(
