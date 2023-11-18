@@ -105,6 +105,21 @@ contract FractionalNFT is Ownable, ERC721, IFractionalNFT {
     }
 
     /// @inheritdoc IFractionalNFT
+    function closeTrading(
+        address _owner,
+        uint256 _tokenId,
+        uint16 _votesAmount
+    ) external override onlyOrderBook onlyValidTokenId(_tokenId) {
+        VoteInfo storage voteInfo = votesInfo[_tokenId][_owner];
+        require(
+            voteInfo.listedVotesAmount >= _votesAmount,
+            "not enough votes amount to trade"
+        );
+        voteInfo.listedVotesAmount -= _votesAmount;
+        voteInfo.unlistedVotesAmount += _votesAmount;
+    }
+
+    /// @inheritdoc IFractionalNFT
     function updatePrices(
         uint256 _tokenId,
         uint256 _price,

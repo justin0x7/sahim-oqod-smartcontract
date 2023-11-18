@@ -54,17 +54,17 @@ contract OrderBook is Ownable, IOrderBook {
         uint16 _amounts
     ) external override {
         address sender = msg.sender;
+        require(_checkTokenId(_tokenId), "invalid tokenId");
         require(_price > 0, "invalid price");
         require(_amounts > 0, "invalid amount");
 
         IERC20(tradeToken).safeTransferFrom(
             sender,
             address(this),
-            _calculateTradeTokenAmount(_price * _amounts)
+            _convertPriceToTokenAmount(_price * _amounts)
         );
 
         uint16 restAmount = _matchTrades(_tokenId, _price, _amounts, true);
-        (_tokenId, _price, _amounts);
         if (restAmount > 0) {
             totalBidIds.add(bidId);
             BidIdsByTokenId[_tokenId].add(bidId);
@@ -76,6 +76,7 @@ contract OrderBook is Ownable, IOrderBook {
                 _tokenId,
                 restAmount
             );
+            bidId++;
         }
 
         emit BidAndSale(sender, _tokenId, _price, _amounts - restAmount);
@@ -88,12 +89,12 @@ contract OrderBook is Ownable, IOrderBook {
         uint16 _amounts
     ) external override {
         address sender = msg.sender;
+        require(_checkTokenId(_tokenId), "invalid tokenId");
         require(_price > 0, "invalid price");
         require(_amounts > 0, "invalid amount");
 
         IFractionalNFT(NFTAddr).openTrading(sender, _tokenId, _price, _amounts);
         uint16 restAmount = _matchTrades(_tokenId, _price, _amounts, false);
-        (_tokenId, _price, _amounts);
         if (restAmount > 0) {
             totalAskIds.add(askId);
             AskIdsByTokenId[_tokenId].add(askId);
@@ -105,9 +106,47 @@ contract OrderBook is Ownable, IOrderBook {
                 _tokenId,
                 restAmount
             );
+            askId++;
         }
 
         emit AskAndSale(sender, _tokenId, _price, _amounts - restAmount);
+    }
+
+    /// @inheritdoc IOrderBook
+    function closeBidAsk(uint256 _tradeId, bool _isBid) external override {
+        address sender = msg.sender;
+        require(
+            (_isBid && _tradeId < bidId) || (!_isBid && _tradeId < askId),
+            "invalid tradeId"
+        );
+        require(
+            (_isBid && bidTrades[_tradeId].creator == sender) ||
+                (!_isBid && askTrades[_tradeId].creator == sender),
+            "no permission"
+        );
+        uint256 tokenId = _isBid
+            ? bidTrades[_tradeId].tokenId
+            : askTrades[_tradeId].tokenId;
+        if (_isBid) {
+            TradeInfo memory info = bidTrades[_tradeId];
+            IERC20(tradeToken).safeTransfer(
+                sender,
+                _convertPriceToTokenAmount(info.amounts * info.price)
+            );
+            delete bidTrades[_tradeId];
+            totalBidIds.remove(_tradeId);
+            BidIdsByTokenId[tokenId].remove(_tradeId);
+            BidIdsByUser[sender].remove(_tradeId);
+        } else {
+            TradeInfo memory info = askTrades[_tradeId];
+            delete askTrades[_tradeId];
+            totalAskIds.remove(_tradeId);
+            AskIdsByTokenId[tokenId].remove(_tradeId);
+            AskIdsByUser[sender].remove(_tradeId);
+            IFractionalNFT(NFTAddr).closeTrading(sender, tokenId, info.amounts);
+        }
+
+        emit BidAskClosed(_tradeId, _isBid);
     }
 
     /// @inheritdoc IOrderBook
@@ -116,20 +155,115 @@ contract OrderBook is Ownable, IOrderBook {
         uint256 _newPrice,
         bool _isAsk
     ) external override {
+        address sender = msg.sender;
+        require(
+            (_isAsk && _tradeId < askId) || (!_isAsk && _tradeId < bidId),
+            "invalid tradeId"
+        );
         TradeInfo storage info = _isAsk
             ? askTrades[_tradeId]
             : bidTrades[_tradeId];
+        require(info.creator == sender, "no permission");
+        require(_newPrice != info.price, "same price");
         if (_isAsk) {
             IFractionalNFT(NFTAddr).updatePrices(
                 info.tokenId,
                 _newPrice,
                 info.amounts
             );
+        } else {
+            uint256 offsetAmount = 0;
+            if (_newPrice < info.price) {
+                offsetAmount = (info.price - _newPrice) * info.amounts;
+                IERC20(tradeToken).safeTransfer(
+                    sender,
+                    _convertPriceToTokenAmount(offsetAmount)
+                );
+            } else {
+                offsetAmount = (_newPrice - info.price) * info.amounts;
+                IERC20(tradeToken).safeTransferFrom(
+                    sender,
+                    address(this),
+                    _convertPriceToTokenAmount(offsetAmount)
+                );
+            }
         }
 
         info.price = _newPrice;
 
-        emit PriceUpdated(_tradeId, _newPrice, _isAsk);
+        uint16 restAmount = _matchTrades(
+            info.tokenId,
+            _newPrice,
+            info.amounts,
+            !_isAsk
+        );
+        uint16 saledAmount = info.amounts - restAmount;
+
+        if (restAmount == 0) {
+            if (_isAsk) {
+                totalAskIds.remove(_tradeId);
+                AskIdsByTokenId[info.tokenId].remove(_tradeId);
+                AskIdsByUser[sender].remove(_tradeId);
+                delete askTrades[_tradeId];
+            } else {
+                totalBidIds.remove(_tradeId);
+                BidIdsByTokenId[info.tokenId].remove(_tradeId);
+                BidIdsByUser[sender].remove(_tradeId);
+                delete bidTrades[_tradeId];
+            }
+        }
+
+        emit PriceUpdated(_tradeId, _newPrice, saledAmount, _isAsk);
+    }
+
+    /// @inheritdoc IOrderBook
+    function getAllBidAskByTokenId(
+        uint256 _tokenId,
+        bool _isBid
+    ) external view override returns (TradeInfo[] memory) {
+        uint256 length = _isBid
+            ? BidIdsByTokenId[_tokenId].length()
+            : AskIdsByTokenId[_tokenId].length();
+        TradeInfo[] memory info = new TradeInfo[](length);
+        if (length == 0) {
+            return info;
+        }
+
+        uint256[] memory tradeIds = _isBid
+            ? BidIdsByTokenId[_tokenId].values()
+            : AskIdsByTokenId[_tokenId].values();
+
+        for (uint256 i = 0; i < length; i++) {
+            uint256 tradeId = tradeIds[i];
+            info[i] = _isBid ? bidTrades[tradeId] : askTrades[tradeId];
+        }
+
+        return info;
+    }
+
+    /// @inheritdoc IOrderBook
+    function getAllBidAskByCreator(
+        address _creator,
+        bool _isBid
+    ) external view override returns (TradeInfo[] memory) {
+        uint256 length = _isBid
+            ? BidIdsByUser[_creator].length()
+            : AskIdsByUser[_creator].length();
+        TradeInfo[] memory info = new TradeInfo[](length);
+        if (length == 0) {
+            return info;
+        }
+
+        uint256[] memory tradeIds = _isBid
+            ? BidIdsByUser[_creator].values()
+            : AskIdsByUser[_creator].values();
+
+        for (uint256 i = 0; i < length; i++) {
+            uint256 tradeId = tradeIds[i];
+            info[i] = _isBid ? bidTrades[tradeId] : askTrades[tradeId];
+        }
+
+        return info;
     }
 
     function _matchTrades(
@@ -149,52 +283,51 @@ contract OrderBook is Ownable, IOrderBook {
         for (uint256 i = 0; i < length; i++) {
             if (_isBid && trades[i].price <= _price) {
                 startIndex = i + 1; // this if for check if found fitable id.
+                break;
             } else if (!_isBid && trades[i].price >= _price) {
                 startIndex = i + 1; // this if for check if found fitable id.
+                break;
             }
         }
 
-        if (startIndex > 0) {
+        if (startIndex == 0) {
             return _amount;
         }
         startIndex -= 1; // back to origin Id.
 
+        uint256 matchTokenId = _tokenId;
         for (uint256 i = startIndex; i < length; i++) {
             if (_amount == 0) return 0;
 
             uint256 id = trades[i].tradeId;
-            uint256 tradeAmount;
-            TradeInfo storage info;
+            TradeInfo storage info = _isBid ? askTrades[id] : bidTrades[id];
+            address seller = _isBid ? info.creator : msg.sender;
+            address buyer = _isBid ? msg.sender : info.creator;
+            uint256 price = _isBid ? _price : info.price;
+            uint16 tradeAmount;
             if (trades[i].amounts > _amount) {
-                info = _isBid ? askTrades[id] : bidTrades[id];
                 info.amounts -= _amount;
                 tradeAmount = _amount;
                 _amount = 0;
             } else {
-                info = _isBid ? askTrades[id] : bidTrades[id];
                 if (_isBid) {
                     totalAskIds.remove(id);
-                    AskIdsByTokenId[_tokenId].remove(id);
+                    AskIdsByTokenId[matchTokenId].remove(id);
                     AskIdsByUser[info.creator].remove(id);
+                    tradeAmount = info.amounts;
                     delete askTrades[id];
                 } else {
                     totalBidIds.remove(id);
-                    BidIdsByTokenId[_tokenId].remove(id);
+                    BidIdsByTokenId[matchTokenId].remove(id);
                     BidIdsByUser[info.creator].remove(id);
+                    tradeAmount = info.amounts;
                     delete bidTrades[id];
                 }
 
                 _amount -= info.amounts;
-                tradeAmount = info.amounts;
             }
 
-            _executeTrade(
-                _isBid ? info.creator : msg.sender,
-                _isBid ? msg.sender : info.creator,
-                _tokenId,
-                _price,
-                info.amounts
-            );
+            _executeTrade(seller, buyer, matchTokenId, price, tradeAmount);
         }
     }
 
@@ -248,11 +381,15 @@ contract OrderBook is Ownable, IOrderBook {
 
         IERC20(tradeToken).safeTransfer(
             _seller,
-            _calculateTradeTokenAmount(_amount * _price)
+            _convertPriceToTokenAmount(_amount * _price)
         );
     }
 
-    function _calculateTradeTokenAmount(
+    function _checkTokenId(uint256 _tokenId) internal view returns (bool) {
+        return _tokenId > 0 && IFractionalNFT(NFTAddr).tokenId() > _tokenId;
+    }
+
+    function _convertPriceToTokenAmount(
         uint256 _price
     ) internal view returns (uint256) {
         uint8 decimals = IToken(tradeToken).decimals();

@@ -15,6 +15,8 @@ interface IFractionalNFT {
         uint256 averagePrice;
     }
 
+    function tokenId() external view returns (uint256);
+
     /// @notice Mint NFT with exact metaData.
     /// @param _metaData The metaData of tokenId.
     function mintNFT(string memory _metaData) external;
@@ -55,6 +57,14 @@ interface IFractionalNFT {
         address _owner,
         uint256 _tradeTokenId,
         uint256 _votePrice,
+        uint16 _votesAmount
+    ) external;
+
+    /// @notice Close trading with certain tokenId.
+    /// @dev Only orderBook can call this function.
+    function closeTrading(
+        address _owner,
+        uint256 _tokenId,
         uint16 _votesAmount
     ) external;
 
